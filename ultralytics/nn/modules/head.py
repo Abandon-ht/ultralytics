@@ -125,6 +125,8 @@ class Detect(nn.Module):
                 self.dfl(box) * self.strides, self.anchors.unsqueeze(0) * self.strides, xywh=False
             )
             return dbox.transpose(1, 2), cls.sigmoid().permute(0, 2, 1)
+        elif self.export and self.format == "axera":
+                return x
         else:
             dbox = self.decode_bboxes(self.dfl(box), self.anchors.unsqueeze(0)) * self.strides
 

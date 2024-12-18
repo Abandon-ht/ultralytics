@@ -19,6 +19,7 @@ PaddlePaddle            | `paddle`                  | yolo11n_paddle_model/
 MNN                     | `mnn`                     | yolo11n.mnn
 NCNN                    | `ncnn`                    | yolo11n_ncnn_model/
 IMX                     | `imx`                     | yolo11n_imx_model/
+AXERA                   | 'axera'                   | yolo11n.axmodel
 
 Requirements:
     $ pip install "ultralytics[export]"
@@ -46,6 +47,7 @@ Inference:
                          yolo11n.mnn                # MNN
                          yolo11n_ncnn_model         # NCNN
                          yolo11n_imx_model          # IMX
+                         yolo11n.axmodel            # AXERA
 
 TensorFlow.js:
     $ cd .. && git clone https://github.com/zldrobit/tfjs-yolov5-example.git && cd tfjs-yolov5-example
@@ -116,6 +118,7 @@ def export_formats():
         ["MNN", "mnn", ".mnn", True, True],
         ["NCNN", "ncnn", "_ncnn_model", True, True],
         ["IMX", "imx", "_imx_model", True, True],
+        ["AXERA", "axera", ".axmodel", True, True],
     ]
     return dict(zip(["Format", "Argument", "Suffix", "CPU", "GPU"], zip(*x)))
 
@@ -210,6 +213,7 @@ class Exporter:
             mnn,
             ncnn,
             imx,
+            axera,
         ) = flags  # export booleans
         is_tf_format = any((saved_model, pb, tflite, edgetpu, tfjs))
 
@@ -382,6 +386,8 @@ class Exporter:
             f[12], _ = self.export_ncnn()
         if imx:
             f[13], _ = self.export_imx()
+        if axera:
+            f[14], _ = self.export_axera()
 
         # Finish
         f = [str(x) for x in f if x]  # filter out '' and None
@@ -1232,6 +1238,62 @@ class Exporter:
             file.writelines([f"{name}\n" for _, name in self.model.names.items()])
 
         return f, None
+
+    @try_export
+    def export_axera(self, prefix=colorstr("AXERA:")):
+        """YOLO AXERA export using PULSAR https://pulsar2-docs.readthedocs.io/en/latest/."""
+        f_onnx, _ = self.export_onnx()  # get onnx model first
+
+        # Setup and checks
+        LOGGER.info(f"\n{prefix} starting export with AXERA pulsar3.3...")
+        assert Path(f_onnx).exists(), f"failed to export ONNX file: {f_onnx}"
+        f = Path(str(self.file).replace(self.file.suffix, f"_axmodel{os.sep}"))
+        f_ax = str(self.file.with_suffix(".axmodel"))  # AXERA model file
+
+        name = Path("pulsar2") # PULSAR2 filename
+        pulsar = name if name.is_file() else (ROOT / name)
+        if not pulsar.is_file():
+            LOGGER.error(f"{prefix} ERROR {pulsar} not found.")
+            return f_ax, None
+        args = ["build",
+                "--target_hardware",
+                "AX620E",
+                "--input",
+                f_onnx,
+                "--output_dir",
+                str(f),
+                "--output_name",
+                f_ax,
+                "--config",
+                "config/yolo11n_config.json"
+                ]
+
+        cmd = [
+            str(pulsar),
+            *args,
+        ]
+        f.mkdir(exist_ok=True)  # make axmodel directory
+        LOGGER.info(f"{prefix} running '{' '.join(cmd)}'")
+        subprocess.run(cmd, check=True)
+
+        # Remove debug files and directories
+        debug_files = [
+            "build_context.json",
+            "compiler",
+            "frontend",
+            "quant",
+        ]
+
+        for debug_item in debug_files:
+            item_path = f / debug_item  # Construct the full path
+            if item_path.exists():
+                if item_path.is_file():
+                    item_path.unlink()  # Remove the file
+                elif item_path.is_dir():
+                    import shutil
+                    shutil.rmtree(item_path)  # Remove the directory
+
+        return str(f), None
 
     def _add_tflite_metadata(self, file):
         """Add metadata to *.tflite models per https://www.tensorflow.org/lite/models/convert/metadata."""
